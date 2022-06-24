@@ -1,0 +1,176 @@
+#!/usr/bin/python3
+
+
+# subscriber -i s1 -r 8000 -h 127.0.0.1 -p 9000 -f subscriber1.cmd
+
+#Import dependecies
+import sys
+import getopt
+import socket
+import re
+import time
+import threading
+
+
+# Remove 1st argument from the
+# list of command line arguments
+argumentList = sys.argv[1:]
+
+# Options
+#f in an optional parameter
+#All parameters require an argument
+options = "i:r:h:p:f:"
+arguments_tuple = ("-i","-r","-h","-p")
+command_file = None
+
+# Long options
+long_options = ["Help"]
+ 
+help_msg = "Displaying Help\n\
+      -i\tIndicates the id of this subscriber. This id will be sent to the broker so that it can keep track of the subscriber and print messages accordingly.\n\
+      -r\tIndicates the port of this specific subscriber. The IP address of the subscriber is implied to be that of the current machine the subscriber is running on.\n\
+      -h\tIndicates the IP address of the broker.\n\
+      -p\tIndicates the port of the broker.\n\
+      -f\tOptional parameter that indicates a file name where there are commands that the subscriber will execute once started and connected to the broker, before giving control to the user from the keyboard."          
+missing = []
+
+# Read arguments from command line
+try:
+      # Parsing argument
+      arguments, values = getopt.getopt(argumentList, options, long_options)
+  
+      arguments_pass = [i[0] for i in arguments]
+      value_pass = [i[1] for i in arguments]
+      #Check for missing arguments
+      for argument in arguments_tuple:
+            if argument not in arguments_pass:
+                  missing.append(argument)
+      if len(missing)!=0:
+            print("Argument(s) " + str(missing) + " missing." )
+            print(help_msg)
+            print('Terminating')
+            sys.exit()
+
+      # checking each argument
+      for currentArgument, currentValue in arguments:
+            if currentArgument in ("--Help" or []):
+                  print(help_msg)
+
+            elif currentArgument in ("-i"):
+                  print ("ID:", value_pass[0])
+                  id_sub = value_pass[0]
+            
+            elif currentArgument in ("-r"):
+                  print ("Subscriber Port:", value_pass[1])
+                  sub_port = value_pass[1]
+            
+            elif currentArgument in ("-h"):
+                  print ("Broker IP:", value_pass[2])
+                  broker_IP = value_pass[2]
+                  
+            elif currentArgument in ("-p"):
+                  print ("Broker Port:", value_pass[3])
+                  broker_PORT = int(value_pass[3])
+            
+            elif currentArgument in ("-f"):
+                  print ("Command file:", value_pass[4])
+                  command_file = value_pass[4]
+                  
+
+except getopt.error as err:
+      # output error, and return with an error code
+      print (str(err))
+      raise
+
+
+
+# Make a list of the commands
+def read_command_file(CommandFile):
+      with open(CommandFile) as file:
+            command = file.readlines()
+            command_list = [line.rstrip() for line in command]
+      return command_list
+
+#https://stackoverflow.com/questions/54621028/send-receive-messages-at-the-same-time-socket-python
+# Activate input from command line after the command file has been read
+def input_commands(conn):
+      background_thread = threading.Thread(target=input_and_send, args=(conn,))
+      background_thread.daemon = True
+      background_thread.start()
+
+# Ask for input
+def input_and_send(conn):
+      while True:
+            command = input()
+            if not re.match(".+\s(un|)sub\s.+", command):
+                  print("Wrong command format. Please try again. Your command:", command)
+                  continue
+            elif command.split()[0] != id_sub:
+                  print("Invalid name of subscriber")
+                  continue
+            conn.send(command.encode())
+            print("Message Sent:", command)         
+
+
+
+
+
+def main():
+    # connect to server and send and receive the data twice
+      # create the socket (endpoints in a communication between programs on some network)
+      # AF_INET -> ipv4       
+      # SOCK_STREAM -> TCP socket (it will be connection-oriented)
+      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #TCP/IP socket
+      # Connect to client
+      sock.connect((broker_IP, broker_PORT))
+      
+     
+      if command_file != None:
+            command_list = read_command_file(command_file)
+            for command in command_list:
+                  if not re.match("\d+\s(un|)sub\s.+", command):
+                        print("Wrong command format (TIME COMMAND TOPIC). Please try again. Your command:", command)
+                        continue
+                  send_msg = id_sub + " "
+                  com_list = command.split()
+                  send_msg += ' '.join([str(item) for item in com_list[1:]])
+
+                  print("Message sent:", send_msg)
+                  stop = float(com_list[0])
+                  time.sleep(stop)
+
+                  sock.sendall(bytes(send_msg +  "\n", "utf-8"))
+                  # receive OK
+                  try:
+                        received = sock.recv(1024)
+                        msg = str(received, "utf-8")# reveive data in a buffer size of 1024 and decode the message
+                        print("Received message: " + msg)
+                        continue
+
+                  except:
+                        print("Error/Disconnect")
+                        break
+      
+      # Activate command line input
+      input_commands(sock)
+      
+      # Wait to receive a message until the subscriber is terminated
+      while True:
+            try:
+                  print("Please enter your message (format: SUB_ID COMMAND TOPIC): ")
+                  received = sock.recv(1024)
+                  msg = str(received, "utf-8")# reveive data in a buffer size of 1024 and decode the message
+                  if not msg:
+                        break
+                  print("\nReceived message: " + msg)
+                  continue
+                  
+            except:
+                  command = "Disconnect"
+                  sock.send(command.encode())
+                  print("Error/Disconnect")
+                  break                  
+
+
+if __name__ == "__main__":
+    main()
